@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="build" content="20260929053323">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>寄一个世界给你 · Postcard World</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231a1024'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%23ffc266'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --fg:#eae7e2; --dim:#9a968f; --line:rgba(255,255,255,.18);
+    --panel:rgba(12,12,16,.72); --accent:#ffc266;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#07070a;color:var(--fg);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif}
+  /* touch-action:none 是移动端能拖拽的前提：不写的话浏览器会把横向拖动
+     判成页面滚动手势，于是 pointerup 收不到 —— 松手后物件还跟着手指走、相机还在转。
+     viewport 里的 user-scalable=no 在 iOS 10+ 已不被遵守，管用的只有这一条。 */
+  canvas{display:block;touch-action:none}
+  #app{position:fixed;inset:0}
+
+  /* ---------- 收件人：入场 ----------
+     这一屏是**主受众看到的第一个东西**，而他打开链接时并不知道这是什么。
+     所以它不能是一块纯黑：那样第一印象是"一个空页面"。
+     改成一层半透明薄幕 —— 世界就在下面，缓慢呼吸、若隐若现，
+     于是一眼就能看出"这里面有个地方"，而不是"这里有个标题"。
+     薄幕用 backdrop-filter 压暗并轻微模糊，既让文字读得清，又不遮住画面。 */
+  #intro{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:22px;z-index:40;text-align:center;padding:24px;transition:opacity 1.1s ease;
+    background:radial-gradient(ellipse at center,rgba(7,7,10,.30) 0%,rgba(7,7,10,.74) 100%);
+    backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
+    animation:veil 7s ease-in-out infinite}
+  @keyframes veil{0%,100%{opacity:1}50%{opacity:.88}}
+  #intro.hide{opacity:0;pointer-events:none}
+  #intro .line{font-size:15px;color:var(--dim);letter-spacing:4px}
+  #intro .who{font-size:30px;letter-spacing:3px;margin:0;
+    text-shadow:0 2px 24px rgba(0,0,0,.9),0 0 60px rgba(0,0,0,.7)}
+  #intro .hint{font-size:12px;color:var(--dim);letter-spacing:2px;opacity:.7}
+  /* 开场页右上角的语言切换。用绝对定位钉在角上 —— 它必须**不参与**中间那组的
+     竖排布局，否则会把"给某人 / 走进去"整组往下推，构图就变了。
+     z-index 高于浮层内容，保证任何情况下都点得到。 */
+  #intro .intro-lang{position:absolute;top:18px;right:20px;z-index:2;
+    font-size:12.5px;letter-spacing:1px;padding:7px 13px;opacity:.85}
+  #intro .intro-lang:hover{opacity:1}
+  /* 时间胶囊那行「这个世界，47 天了」。
+     它是**事实**不是装饰，所以要读得清；但也不能抢过收件人的名字 ——
+     于是用 accent 暖色 + 比 .line 更小的字号，落在名字正下方。 */
+  #intro .wait{font-size:14px;letter-spacing:3px;color:var(--accent);opacity:.92;
+    text-shadow:0 2px 18px rgba(0,0,0,.9)}
+  /* 样例世界专属的说明与入口。默认**不显示** ——
+     真正的收件人（带着 #w=… 来的）不该看到"你也可以做一个"这种话，
+     他要的是走进自己的那个世界。只有自动落到样例世界时才出现。 */
+  #intro .demo-note{display:none}
+  body[data-demo-first="1"] #intro .demo-note{display:flex;flex-direction:column;align-items:center;
+    gap:10px;margin-top:6px;max-width:560px}
+  body[data-demo-first="1"] #intro .demo-note span{font-size:12.5px;line-height:1.9;color:var(--dim);
+    letter-spacing:1px}
+  body[data-demo-first="1"] #intro .demo-note button{font-size:13px;letter-spacing:2px;padding:9px 18px}
+  /* 建世界失败时显示的诊断块。**必须看得见、能读、能选中复制** ——
+     手机上没有控制台，这是唯一的信息出口。
+     （有用户反馈手机端黑屏，而桌面与移动仿真都复现不出来：
+      既然够不到真机，至少要让真机自己说出卡在哪一步。） */
+  #intro .fatal{max-width:580px;margin-top:10px;padding:12px 14px;border-radius:10px;
+    background:rgba(62,16,16,.78);border:1px solid rgba(255,130,130,.5);
+    font-size:12px;line-height:1.85;color:#ffdcdc;text-align:left;
+    white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text}
+  /* 入场按钮是唯一要做的事，给它一点分量 */
+  #intro-enter{padding:13px 34px;font-size:16px;letter-spacing:3px;border-radius:999px;
+    background:rgba(20,18,26,.72);border-color:rgba(255,255,255,.32)}
+  #intro-enter:not(:disabled){animation:breathe 3.2s ease-in-out infinite}
+  @keyframes breathe{0%,100%{box-shadow:0 0 0 0 rgba(255,194,102,0)}50%{box-shadow:0 0 0 9px rgba(255,194,102,.07)}}
+  /* 入场浮层还在时，把"游戏内"的东西全部藏起来。
+     否则薄幕后面会透出 HUD 按钮、准星，以及**那句话本身** ——
+     收件人在还没走进去之前就看见了结局，整个作品的悬念当场作废。
+     （body 上的 .veiled 由 main.js 在点了「走进去」之后摘掉。） */
+  body.veiled #msg,body.veiled #hud-receive,body.veiled #crosshair{opacity:0;pointer-events:none}
+
+  /* ---------- 收件人：那句话 ---------- */
+  #msg{position:fixed;left:0;right:0;bottom:16vh;display:flex;justify-content:center;
+    z-index:30;pointer-events:none;opacity:0;transition:opacity 1.2s ease}
+  #msg.on{opacity:1}
+  #msg p{max-width:640px;margin:0;padding:18px 26px;font-size:19px;line-height:1.9;letter-spacing:1px;
+    text-align:center;text-shadow:0 2px 18px rgba(0,0,0,.85)}
+  /* 中心那行天数：比那句话小、比它暗，压在句子下面 —— 它是注脚，不是第二句台词 */
+  #msg #msg-wait{font-size:13px;letter-spacing:4px;color:var(--accent);opacity:.8;padding:0 26px 18px}
+
+  /* ---------- 收件人：回信 ----------
+     一次只让他做一件事：先选一件东西，再写字，最后拿到链接。
+     三段用 body 上的 data-step 切换，而不是三个弹窗 —— 切换是同一个面板在变，
+     观者不会觉得"又弹了一个窗户出来"。 */
+  #reply{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    z-index:45;padding:20px;background:rgba(7,7,10,.62);backdrop-filter:blur(6px)}
+  #reply.on{display:flex}
+  #reply .card{width:100%;max-width:440px;background:rgba(16,14,20,.94);
+    border:1px solid var(--line);border-radius:16px;padding:26px 24px;
+    box-shadow:0 24px 70px rgba(0,0,0,.6)}
+  #reply h2{margin:0 0 6px;font-size:20px;letter-spacing:2px;font-weight:600}
+  #reply .sub{margin:0 0 18px;font-size:13px;color:var(--dim);letter-spacing:1px}
+  #reply .choices{display:grid;gap:10px}
+  #reply .choices button{display:block;width:100%;text-align:left;padding:14px 16px;border-radius:12px}
+  #reply .choices b{display:block;font-size:15px;letter-spacing:1px;margin-bottom:4px}
+  #reply .choices span{font-size:12.5px;color:var(--dim)}
+  #reply .choices button[aria-pressed="true"]{border-color:var(--accent);
+    background:rgba(255,194,102,.10)}
+  #reply .compose,#reply .result{display:none;margin-top:6px}
+  #reply textarea{width:100%;box-sizing:border-box;resize:none;font:inherit;font-size:14.5px;
+    line-height:1.7;color:var(--fg);background:rgba(0,0,0,.35);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;margin-bottom:12px}
+  #reply input{width:100%;box-sizing:border-box;font:inherit;font-size:12px;color:var(--dim);
+    background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:8px;
+    padding:10px 12px;margin:10px 0 12px}
+  #reply .row{display:flex;gap:10px}
+  #reply .ok{margin:0;font-size:15px;letter-spacing:1px;color:var(--accent)}
+  #reply .tip{margin:12px 0 0;font-size:12px;line-height:1.7;color:var(--dim)}
+  /* 按步骤显示：选 → 写 → 拿到链接 */
+  body[data-reply-step="choose"] #reply .choices{display:grid}
+  body[data-reply-step="choose"] #reply .compose,
+  body[data-reply-step="choose"] #reply .result{display:none}
+  body[data-reply-step="write"] #reply .choices{display:none}
+  body[data-reply-step="write"] #reply .compose{display:block}
+  body[data-reply-step="write"] #reply .result{display:none}
+  body[data-reply-step="done"] #reply .choices,
+  body[data-reply-step="done"] #reply .compose{display:none}
+  body[data-reply-step="done"] #reply .result{display:block}
+  .hidden{display:none !important}
+
+  /* ---------- 通用 HUD ---------- */
+  .hud{position:fixed;z-index:20}
+  #hud-receive{left:0;right:0;bottom:0;padding:14px 18px;display:flex;gap:10px;
+    align-items:center;justify-content:center;pointer-events:none}
+  #hud-receive button{pointer-events:auto}
+  button{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:9px 14px;cursor:pointer;backdrop-filter:blur(8px);transition:.18s}
+  button:hover{border-color:rgba(255,255,255,.5);background:rgba(30,30,38,.8)}
+  button:disabled{opacity:.45;cursor:progress;border-color:var(--line)}
+  button:disabled:hover{background:var(--panel);border-color:var(--line)}
+  button.ghost{background:transparent;color:var(--dim);font-size:12px;padding:6px 10px}
+
+  #crosshair{position:fixed;left:50%;top:50%;width:5px;height:5px;margin:-2.5px 0 0 -2.5px;
+    border-radius:50%;background:rgba(255,255,255,.55);z-index:15;pointer-events:none;
+    box-shadow:0 0 10px rgba(0,0,0,.6)}
+
+  /* ---------- 创作者面板 ---------- */
+  body.mode-create #intro,body.mode-create #msg,body.mode-create #hud-receive,
+  body.mode-create #crosshair{display:none}
+  body.mode-receive #create{display:none}
+
+  /* 拍摄模式：只留画面、标题卡和那句话；所有过渡关掉，保证逐帧可复现 */
+  body.mode-take #create,body.mode-take #hud-receive,
+  body.mode-take #crosshair,body.mode-take #notice,body.mode-take #toast{display:none}
+  body.mode-take #intro,body.mode-take #msg{transition:none}
+
+  #create{position:fixed;top:0;right:0;width:340px;max-width:92vw;height:100%;z-index:20;
+    background:var(--panel);backdrop-filter:blur(14px);border-left:1px solid var(--line);
+    padding:22px 20px 90px;overflow-y:auto}
+  #create h1{font-size:17px;letter-spacing:5px;margin:0 0 4px}
+  #create .sub{font-size:11px;color:var(--dim);letter-spacing:2px;margin-bottom:22px}
+  #create label{display:block;font-size:11px;color:var(--dim);letter-spacing:2px;margin:20px 0 7px}
+  #create input[type=text],#create textarea{width:100%;background:rgba(0,0,0,.4);color:var(--fg);
+    border:1px solid var(--line);border-radius:8px;padding:10px 11px;font:inherit;font-size:14px;resize:none}
+  #create textarea{height:74px;line-height:1.6}
+  .skies{display:flex;gap:6px;flex-wrap:wrap}
+  .skies button{padding:7px 12px;font-size:13px}
+  .skies button[aria-pressed=true]{border-color:var(--accent);color:var(--accent)}
+  .palette{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .palette button{padding:8px;font-size:12.5px;text-align:left}
+  .palette button[aria-pressed=true]{border-color:var(--accent);color:var(--accent)}
+  /* 行内的小工具（清空/预览/声音）：它们不是主要内容，
+     给一道细分隔线 + 更小的字号，让上面那些真正要做的事先被看见 */
+  .row{display:flex;gap:8px;align-items:center;margin-top:16px;padding-top:14px;
+    border-top:1px solid rgba(255,255,255,.07)}
+  .row button.ghost{font-size:11.5px;padding:6px 9px}
+  #budget{font-size:11px;color:var(--dim);letter-spacing:1px;margin-top:6px}
+  #budget.warn{color:#ff9a6a}
+  /* ---------- 创作者：「这条链接怎么用」----------
+     这是整台机器**最独特的一处**：一条链接的两种命运。所以它拿最大的视觉权重 ——
+     它上面单独一条分隔线、按钮更高、字号更大；上面那些表单是"做世界"，
+     这里是"决定这个世界的命运"，两件事不该长得一样重。
+     两个按钮平级、各占一行：这是一个**选择**，不是"主按钮 + 次要按钮"，
+     所以不用主次配色去暗示哪个更该点。选中的那个用 accent 描边（与天色/物件同一套语言）。 */
+  .capsule{display:grid;gap:8px;margin:2px 0 12px}
+  .capsule button{padding:12px 14px;font-size:13.5px;letter-spacing:.5px;text-align:left;
+    border-radius:11px}
+  .capsule button[aria-pressed=true]{border-color:var(--accent);color:var(--accent);
+    background:rgba(255,194,102,.10);box-shadow:inset 0 0 0 1px rgba(255,194,102,.25)}
+  .capsule .cap-live{margin:6px 0 0;font-size:11.5px;line-height:1.8;color:var(--dim)}
+  .capsule.is-capsule .cap-live{color:var(--accent);opacity:.9}
+  /* 链接正文是"结果"，不是"控件"：压暗、缩到最小，只在你需要复制时被看见 */
+  #link-out{font-size:10.5px;word-break:break-all;color:var(--dim);margin-top:10px;
+    max-height:76px;overflow:auto;line-height:1.6;opacity:.72}
+  .tip{font-size:11.5px;color:var(--dim);line-height:1.8;margin-top:16px;
+    border-top:1px solid var(--line);padding-top:14px}
+
+  #notice{position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:50;
+    background:rgba(0,0,0,.78);border:1px solid var(--line);border-radius:10px;
+    padding:9px 16px;font-size:12.5px;letter-spacing:1px;display:none}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:60;
+    background:rgba(0,0,0,.82);border:1px solid var(--line);border-radius:10px;
+    padding:10px 18px;font-size:13px;opacity:0;transition:opacity .35s;pointer-events:none}
+  #toast.on{opacity:1}
+
+  /* 三维画布必须显式压到 UI 之下。
+     渲染器的 canvas 是在模块脚本里 appendChild 到 #app 的，而 #intro 早就写在 HTML 里 ——
+     也就是说 canvas 会**后**插入、默认盖在入场浮层上，
+     于是浮层想做的"透过薄幕看见世界"永远看不见（薄幕下面只有黑底）。
+     一句话的事，但不设就会一直以为是 backdrop-filter 不支持。 */
+  #app canvas{position:relative;z-index:1}
+
+  @media (max-width:760px){
+    #create{width:100%;height:52%;top:auto;bottom:0;border-left:none;border-top:1px solid var(--line);
+      padding-bottom:24px}
+    #intro .who{font-size:23px}
+    #msg p{font-size:16px}
+  }
+
+  /* 窄屏：HUD 那排按钮会挤成两行，收一收内边距和字号让它单行放下 */
+  @media (max-width:520px){
+    #hud-receive{padding:10px 8px;gap:6px;flex-wrap:nowrap}
+    #hud-receive button{padding:8px 9px;font-size:12px;white-space:nowrap;border-radius:8px}
+    #msg{bottom:20vh}
+    #msg p{padding:14px 18px;font-size:15.5px}
+  }
+</style>
+</head>
+<body class="mode-create">
+
+<div id="app"></div>
+<div id="crosshair"></div>
+
+<!-- 收件人：入场 -->
+<div id="intro">
+  <!-- 语言切换：**必须出现在这里**，不能只放在进入世界之后的 HUD 里。
+       理由：非中文评委第一眼看到的就是这一屏，如果这一屏读不懂，
+       他不会先走进去、再去找切换按钮 —— 他会直接关掉。
+       （用户明确提过这一条：开始的页面就要能切语言。） -->
+  <button class="ghost intro-lang" id="btn-lang-intro" title="English / 中文">EN</button>
+  <!-- 这一行由 main.js 填：正常情况下是"有人给你留了一个世界"，
+       而**没有 #w= 自动进来的样例世界**要如实说"先看看它是什么" ——
+       不能装成"有人给你留了一个"：评委没收到过谁的东西，装出这层关系反而假。 -->
+  <div class="line" id="intro-line" data-i18n="introLine">有人给你留了一个世界</div>
+  <h1 class="who" id="intro-name">给某人</h1>
+  <!-- 时间胶囊才有这一行：这个世界封存多久了。0 天不显示（由 main.js 决定）。
+       语气是中性的 —— 零后端不知道打开的人是谁，写成"等了你"会在本人打开时自相矛盾。 -->
+  <div class="wait hidden" id="intro-wait"></div>
+  <button id="intro-enter" disabled data-i18n="preparing">正在准备…</button>
+  <div class="hint" data-i18n="hintKeys">拖动看四周 · WASD 或 ↑↓ 走路 · 手机上按住"向前"</div>
+  <!-- 世界建不起来时，把**原因**显示在这里，而不是留一片黑屏。
+       手机上没有控制台可看，一片黑屏对用户和排查都是零信息。
+       （有用户反馈过手机端黑屏，而桌面与移动仿真都复现不出来 ——
+        既然够不到真机，至少要让真机自己说出卡在哪。） -->
+  <div class="fatal hidden" id="intro-fatal"></div>
+  <!-- 只在**自动带进来的样例世界**里出现（body[data-demo-first] 控制）。
+       它承担两件事：说清"这是别人的世界"，并给出做自己那个的入口 ——
+       否则评委看完不知道这作品还能自己做一个。 -->
+  <div class="demo-note" id="intro-note">
+    <span data-i18n="demoNote">这是别人做给他、他走进去看过的一个世界 —— 你也可以做一个，送给某个人</span>
+    <button class="ghost" id="intro-create" data-i18n="demoCreate">我也做一个 →</button>
+  </div>
+</div>
+
+<!-- 收件人：那句话 -->
+<div id="msg">
+  <p id="msg-text"></p>
+  <!-- 走到中心时，只有时间胶囊会多这一行小字（内容由 main.js 填）。
+       与开场那行同一个事实，同一个中性语气 —— 读完那句话再看见它，是"它一直在等你"。 -->
+  <p id="msg-wait" class="hidden"></p>
+</div>
+
+<!-- 收件人：回信 -->
+<!-- 走到中心、那句话浮现之后才出现。让他**选一件东西**替他说话，
+     而不是给一个通用的"回复"按钮 —— 选什么来信本身就是一次表达。 -->
+<div id="reply">
+  <div class="card">
+    <h2 id="reply-title" data-i18n="replyTitle">回一封信给他</h2>
+    <p class="sub" id="reply-sub" data-i18n="replySub">挑一件东西，让它替你说话</p>
+    <div class="choices" id="reply-choices"></div>
+    <div class="compose" id="reply-compose">
+      <textarea id="reply-text" rows="2" maxlength="90" data-i18n-ph="replyPlaceholder"
+        placeholder="写一句话，跟他一起回去（可留空）"></textarea>
+      <div class="row">
+        <button id="reply-send" data-i18n="replySend">把回信寄回去</button>
+        <button id="reply-cancel" class="ghost" data-i18n="replyCancel">再想想</button>
+      </div>
+    </div>
+    <div class="result" id="reply-result">
+      <p class="ok" data-i18n="replyOk">回信已经装好了</p>
+      <input id="reply-link" readonly>
+      <div class="row">
+        <button id="reply-copy" data-i18n="replyCopy">复制回信链接</button>
+        <button id="reply-close" class="ghost" data-i18n="replyClose">留在这里</button>
+      </div>
+      <p class="tip" data-i18n="replyTip">把这条链接发回给他 —— 他会看到自己的世界被你走过之后的样子</p>
+    </div>
+  </div>
+</div>
+
+<!-- 收件人：HUD -->
+<div id="hud-receive" class="hud">
+  <button id="btn-walk" data-i18n="walk">按住向前</button>
+  <button id="btn-reply" class="hidden" data-i18n="reply">回一封信</button>
+  <button id="btn-postcard" class="ghost" data-i18n="postcard">存一张明信片</button>
+  <button class="ghost js-sound" data-i18n="soundOn">声音：开</button>
+  <button id="btn-lang" class="ghost" title="English / 中文">EN</button>
+  <button id="btn-create-new" class="ghost" data-i18n="createNew">我也做一个世界</button>
+</div>
+
+<!-- 创作者面板 -->
+<div id="create" class="hud">
+  <h1 data-i18n="createTitle">寄一个世界给你</h1>
+  <div class="sub" data-i18n="createSub">POSTCARD WORLD · 60 秒做，送一个人</div>
+
+  <label data-i18n="lblWho">送给谁</label>
+  <input id="in-name" type="text" maxlength="24" data-i18n-ph="phWho" placeholder="比如：小时候的自己" autocomplete="off">
+
+  <label data-i18n="lblMsg">想对他说的一句话</label>
+  <textarea id="in-msg" maxlength="90" data-i18n-ph="phMsg" placeholder="这句话会藏在这个世界的中心，只有他走进去才会看见。"></textarea>
+
+  <label data-i18n="lblSky">天色</label>
+  <div class="skies" id="skies"></div>
+
+  <label data-i18n="lblPalette">放点什么进去（选中后，点地面放置）</label>
+  <div class="palette" id="palette"></div>
+
+  <div class="row">
+    <button id="btn-clear" class="ghost" data-i18n="btnClear">清空摆放</button>
+    <button id="btn-preview" class="ghost" data-i18n="btnPreview">以收件人视角看看</button>
+    <button class="ghost js-sound" data-i18n="soundOn">声音：开</button>
+    <button id="btn-lang-create" class="ghost" title="English / 中文">EN</button>
+  </div>
+
+  <label data-i18n="lblLinkHow">这条链接怎么用</label>
+  <!-- 一条链接只有两种命运，由创作者在这里选一次（见 src/state.js 顶部）。
+       两个按钮都会把链接复制到剪贴板 —— 选择本身就是"复制"这个动作。 -->
+  <div class="capsule" id="capsule">
+    <button id="cap-share" aria-pressed="true" data-i18n="capShare">发给他 · 封存这条世界</button>
+    <button id="cap-keep" aria-pressed="false" data-i18n="capKeep">留给自己 · 让它自己变老</button>
+    <p class="cap-live" id="capsule-live"></p>
+  </div>
+  <div id="budget"></div>
+  <div id="link-out"></div>
+
+  <div class="tip" id="tip-create">
+    <span data-i18n="tipLine1">拖动旋转 · 滚轮缩放 · 点地面放置或移动物件</span><br>
+    <span data-i18n="tipLine2">这个世界只有 6.5 米宽——礼物不需要很大。</span>
+  </div>
+</div>
+
+<div id="notice"></div>
+<div id="toast"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/jsm/"
+  }
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
